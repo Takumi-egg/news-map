@@ -2,9 +2,9 @@ import feedparser
 import threading
 import time
 import requests
-import spacy # AI(spaCy)ライブラリをインポート
+import spacy
 from flask import Flask, jsonify
-from flask_cors import CORS
+from flask_cors import CORS # CORSをインポート
 
 # --- AIモデルの読み込み ---
 print("AIモデルを読み込んでいます...（初回起動時は時間がかかる場合があります）")
@@ -27,7 +27,12 @@ stop_event = threading.Event()
 
 # --- Flaskアプリケーションの初期化 ---
 app = Flask(__name__)
-CORS(app)
+
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+# CORS設定を修正
+# あなたのGitHub PagesのURLからのアクセスを許可する
+CORS(app, resources={r"/api/*": {"origins": "https://takumi-egg.github.io"}})
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 
 def get_coordinates(place_name):
     """地名から国土地理院APIを使って緯度・経度を取得する関数"""
@@ -45,13 +50,8 @@ def get_coordinates(place_name):
     print(f"  -> ジオコーディング失敗: {place_name}")
     return None
 
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-# 新しい地名抽出ロジック
 def extract_locations_with_nlp(text):
-    """
-    AI(spaCy/GiNZA)を使ってテキストから地名を構造的に抽出する。
-    戻り値: {'prefecture': '〇〇県', 'city': '〇〇市', 'town': '〇〇町'} のような辞書
-    """
+    """AIを使って地名を構造的に抽出する"""
     doc = nlp(text)
     
     all_entities = [(ent.text, ent.label_) for ent in doc.ents]
@@ -63,17 +63,9 @@ def extract_locations_with_nlp(text):
     target_labels = ['GPE', 'Province', 'City']
     potential_locations = [ent.text for ent in doc.ents if ent.label_ in target_labels]
     
-    # 抽出した地名を格納する辞書
-    locations = {
-        'prefecture': None,
-        'city': None, # 市と区
-        'town': None  # 町と村
-    }
-
-    # 県名と同じ名前を持つ市名のリスト（「長崎」のような曖昧さを解決するため）
+    locations = {'prefecture': None, 'city': None, 'town': None}
     ambiguous_names = ['長崎', '宮崎', '鹿児島', '佐賀', '沖縄', '岡山', '富山', '石川', '福井', '山梨', '栃木', '青森', '秋田', '山形', '福島', '岩手', '宮城', '奈良', '岐阜', '静岡', '広島', '山口', '徳島', '高知', '大分', '熊本']
 
-    # 抽出された地名候補を分類し、辞書に格納する
     for loc in potential_locations:
         if loc.endswith(('都', '道', '府', '県')):
             locations['prefecture'] = loc
@@ -81,15 +73,12 @@ def extract_locations_with_nlp(text):
             locations['city'] = loc
         elif loc.endswith('町') or loc.endswith('村'):
             locations['town'] = loc
-        # 「長崎」のように県名にも市名にもなりうる単語の処理
         elif loc in ambiguous_names:
-            # すでに県が特定されていない場合に限り、これを県とみなす
             if not locations['prefecture']:
                 locations['prefecture'] = loc + '県'
 
     print(f"  -> 構造化された地名: {locations}")
     return locations
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 
 def fetch_yahoo_news():
     """Yahoo!ニュースを取得し、AIで地名を抽出、ジオコーディングしてデータを更新する"""
@@ -105,14 +94,11 @@ def fetch_yahoo_news():
             print(f"\n[解析対象] {entry.title}")
 
             full_text = entry.title + " " + entry.get("description", "")
-            # ★ 構造化された地名データを取得
             found_locations = extract_locations_with_nlp(full_text)
             
-            # ★ ジオコーディング用のクエリを作成
             query_parts = []
-            final_location_type = 'other' # ソート用のタイプ
+            final_location_type = 'other'
 
-            # 最も詳細な地名から順にクエリ部品を追加
             if found_locations.get('town'):
                 query_parts.append(found_locations['town'])
                 final_location_type = 'town'
@@ -124,7 +110,6 @@ def fetch_yahoo_news():
                 if final_location_type == 'other': final_location_type = 'prefecture'
 
             if query_parts:
-                # 正しい住所の順（県→市→町）になるようにリストを逆順にして結合
                 geocoding_query = "".join(reversed(query_parts))
                 print(f"  -> ジオコーディングクエリ: '{geocoding_query}'")
                 coords = get_coordinates(geocoding_query)
@@ -143,7 +128,6 @@ def fetch_yahoo_news():
             else:
                 print("  => 結果: 地名が抽出できなかったため、リストに追加しません。")
 
-        # 抽出したニュースリストを、地名の種類に基づいてソートする
         sort_order = {
             'prefecture': 0, 'ward': 1, 'city': 2, 'town': 3, 'village': 4, 'other': 5
         }
