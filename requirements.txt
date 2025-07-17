@@ -5,3 +5,4 @@ Flask-Cors==4.0.1
 spacy==3.4.4
 ja-ginza==5.1.2
 gunicorn==22.0.0
+numpy==1.23.5
