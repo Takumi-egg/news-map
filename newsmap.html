@@ -186,7 +186,7 @@
         }
 
         function startApplication() {
-            fetch('http://127.0.0.1:5000/api/news')
+            fetch('https://news-map-in-jp.onrender.com/api/news')
                 .then(response => {
                     if (!response.ok) throw new Error('バックエンドサーバーに接続できません。');
                     return response.json();
