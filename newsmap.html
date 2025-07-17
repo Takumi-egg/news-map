@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <title>News Map with Takumi</title>
+    <link rel="icon" href="./logo.jpg" type="image/jpeg">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <style>
+        html, body {
+            height: 100vh; margin: 0; padding: 0;
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            overflow: hidden; background-color: #f0f2f5;
+        }
+        #splash-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: #ffffff; display: flex; justify-content: center;
+            align-items: center; z-index: 9999;
+            animation: fade-out 3.5s ease-in-out forwards;
+        }
+        #splash-logo {
+            width: 200px; height: auto;
+            animation: spin 3s linear infinite;
+        }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes fade-out {
+            0% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; visibility: hidden; }
+        }
+        .leaflet-popup-content-wrapper { border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .leaflet-popup-content { margin: 15px; font-size: 14px; line-height: 1.6; }
+        .leaflet-popup-content h3 { font-weight: bold; font-size: 16px; margin-bottom: 8px; color: #1a202c; }
+        .leaflet-popup-content p { margin-bottom: 12px; color: #4a5568; }
+        .leaflet-popup-content a { color: #3b82f6; text-decoration: none; font-weight: 600; }
+        .leaflet-popup-content a:hover { text-decoration: underline; }
+        #loader { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 2000; }
+        #message-box { display: none; position: absolute; top: 6rem; left: 50%; transform: translateX(-50%); z-index: 2000; }
+        
+        /* ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★ */
+        /* ニュースティッカーのアニメーション */
+        @keyframes scroll-left {
+            from { transform: translateX(0); }
+            to { transform: translateX(-50%); } /* コンテンツの半分の幅だけ移動 */
+        }
+        .animate-scroll-left {
+            /* アニメーション時間はJSで動的に設定 */
+            animation: scroll-left linear infinite;
+        }
+        /* サイドバーのリサイズ用ハンドル */
+        #resizer {
+            flex-shrink: 0; /* 幅が変わらないようにする */
+            cursor: col-resize;
+            background-color: #e5e7eb; /* gray-200 */
+            transition: background-color 0.2s;
+        }
+        #resizer:hover {
+            background-color: #3b82f6; /* blue-500 */
+        }
+        /* ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★ */
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body class="flex flex-col h-screen">
+
+    <div id="splash-screen">
+        <img id="splash-logo" src="./logo.jpg" alt="Loading Logo">
+    </div>
+
+    <header class="bg-white shadow-md z-10 w-full flex-shrink-0">
+        <div class="w-full px-4 py-2 flex items-center justify-between">
+            <img src="./logo.jpg" alt="Header Logo" class="h-14">
+            <div id="news-ticker-container" class="flex-grow ml-6 overflow-hidden relative h-8">
+                <!-- ★ ティッカーの構造を変更 -->
+                <div id="news-ticker-content" class="absolute top-0 left-0 flex">
+                    <span class="mx-8 text-gray-500 text-lg italic">最新ニュースを読み込んでいます...</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- メインコンテンツエリア -->
+    <div class="flex flex-1 overflow-hidden">
+        <main id="map" class="flex-1 h-full"></main>
+        
+        <!-- ★ サイドバーのリサイズ用ハンドルを追加 -->
+        <div id="resizer" class="w-2 h-full"></div>
+        
+        <!-- ★ サイドバーにIDを付与し、初期幅を設定 -->
+        <aside id="sidebar" class="w-96 bg-gray-50 border-l border-gray-200 flex flex-col h-full flex-shrink-0">
+            <div class="p-4 border-b border-gray-200">
+                <h2 class="text-lg font-bold text-gray-700">最新ニュース一覧</h2>
+            </div>
+            <div id="sidebar-content" class="flex-1 overflow-y-auto"></div>
+        </aside>
+    </div>
+    
+    <div id="message-box" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg shadow-md">
+        <p id="message-text"></p>
+    </div>
+
+    <script>
+        const map = L.map('map').setView([36.2048, 138.2529], 5);
+        const markers = [];
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(map);
+
+        const messageBox = document.getElementById('message-box');
+        const messageText = document.getElementById('message-text');
+        const sidebarContent = document.getElementById('sidebar-content');
+        const tickerContent = document.getElementById('news-ticker-content');
+        const splashScreen = document.getElementById('splash-screen');
+
+        function plotNewsOnMap(newsItems) {
+            markers.forEach(marker => map.removeLayer(marker));
+            markers.length = 0;
+            sidebarContent.innerHTML = '';
+            
+            tickerContent.classList.remove('animate-scroll-left');
+            tickerContent.innerHTML = '';
+            
+            if (newsItems.length === 0) {
+                messageText.innerHTML = '<p class="font-bold">地名付きニュースが見つかりません</p><p>現在取得できているニュースに、認識可能な地名が含まれていないようです。</p>';
+                messageBox.style.backgroundColor = '#fffbeb';
+                messageBox.style.color = '#92400e';
+                messageBox.style.borderColor = '#fde68a';
+                messageBox.style.display = 'block';
+                tickerContent.innerHTML = '<span class="mx-8 text-gray-500 text-lg">地名を含むニュースが見つかりませんでした。</span>';
+                return;
+            }
+            
+            // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+            // ティッカーのロジックを改善
+            const allTitles = newsItems.map(item => item.title).join('<span class="text-gray-400 mx-4">/</span>');
+            
+            // 2つのパートを作成して無限ループを実現
+            const part1 = document.createElement('div');
+            part1.className = 'flex-shrink-0 whitespace-nowrap px-8 text-gray-700 text-lg';
+            part1.innerHTML = allTitles;
+
+            const part2 = document.createElement('div');
+            part2.className = 'flex-shrink-0 whitespace-nowrap px-8 text-gray-700 text-lg';
+            part2.innerHTML = allTitles;
+
+            tickerContent.appendChild(part1);
+            tickerContent.appendChild(part2);
+
+            // コンテンツの幅に基づいてアニメーション速度を動的に計算
+            const contentWidth = part1.offsetWidth;
+            const speed = 80; // 1秒あたり80ピクセル移動
+            const duration = contentWidth / speed;
+            
+            tickerContent.style.animationDuration = `${duration}s`;
+            tickerContent.classList.add('animate-scroll-left');
+            // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+            newsItems.forEach((item) => {
+                if (item.coords) {
+                    const marker = L.marker(item.coords);
+                    const popupContent = `
+                        <div class="p-1">
+                            <h3 class="font-bold text-lg mb-2 text-gray-800">${item.title}</h3>
+                            <p class="text-gray-600 mb-3">${item.description || '概要はありません。'}</p>
+                            <a href="${item.link}" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 font-semibold">記事を読む &rarr;</a>
+                        </div>`;
+                    marker.bindPopup(popupContent).addTo(map);
+                    markers.push(marker);
+
+                    const sidebarItem = document.createElement('div');
+                    sidebarItem.className = 'p-4 border-b border-gray-200 cursor-pointer hover:bg-gray-100 transition-colors';
+                    sidebarItem.innerHTML = `<h4 class="font-bold text-gray-800">${item.title}</h4>`;
+                    sidebarItem.addEventListener('click', () => {
+                        map.flyTo(item.coords, 13);
+                        marker.openPopup();
+                    });
+                    sidebarContent.appendChild(sidebarItem);
+                }
+            });
+        }
+
+        function startApplication() {
+            fetch('http://127.0.0.1:5000/api/news')
+                .then(response => {
+                    if (!response.ok) throw new Error('バックエンドサーバーに接続できません。');
+                    return response.json();
+                })
+                .then(plotNewsOnMap)
+                .catch(error => {
+                    console.error('Error fetching news:', error);
+                    messageText.innerHTML = `<p class="font-bold">データ取得エラー</p><p>${error.message}</p>`;
+                    messageBox.style.display = 'block';
+                });
+        }
+
+        window.onload = function() {
+            setTimeout(() => {
+                splashScreen.style.display = 'none';
+                startApplication();
+            }, 3500);
+        };
+
+        // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+        // サイドバーのリサイズ機能
+        const resizer = document.getElementById('resizer');
+        const sidebar = document.getElementById('sidebar');
+        
+        const handleMouseMove = (e) => {
+            const newWidth = window.innerWidth - e.clientX;
+            if (newWidth > 300 && newWidth < 800) { // 幅の最小・最大値を設定
+                sidebar.style.width = `${newWidth}px`;
+            }
+        };
+
+        const handleMouseUp = () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+            map.invalidateSize(); // 地図のサイズを再計算させる
+        };
+
+        resizer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+        });
+        // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    </script>
+</body>
+</html>

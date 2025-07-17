@@ -1,0 +1,7 @@
+Flask==3.0.3
+feedparser==6.0.11
+requests==2.32.3
+Flask-Cors==4.0.1
+spacy==3.7.5
+ja-ginza==5.1.2
+gunicorn==22.0.0
